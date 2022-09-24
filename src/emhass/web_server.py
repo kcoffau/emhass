@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from flask import Flask, request, make_response, render_template
+from flask import Flask, request, make_response, render_template, abort
 from jinja2 import Environment, PackageLoader
 from requests import get
 from waitress import serve
@@ -20,6 +20,11 @@ from emhass.command_line import publish_data
 app = Flask(__name__) #, static_url_path='/static'
 app.logger.setLevel(logging.INFO)
 app.logger.propagate = False
+
+@app.before_request
+def limit_remote_addr():
+    if request.remote_addr != '172.30.32.2':
+        abort(403)  # Forbidden
 
 def get_injection_dict(df, plot_size = 1366):
     # Create plots
