@@ -215,7 +215,7 @@ if __name__ == "__main__":
     params['retrieve_hass_conf'] = retrieve_hass_conf
     params['optim_conf'] = optim_conf
     params['plant_conf'] = plant_conf
-    web_ui_url = '0.0.0.0'
+    web_ui_url = '172.30.32.2'
 
     # Initialize this global dict
     opt_res = pd.read_csv(base_path+'/data/opt_res_latest.csv', index_col='timestamp')
