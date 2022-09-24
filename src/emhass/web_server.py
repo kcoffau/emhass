@@ -264,7 +264,7 @@ if __name__ == "__main__":
         pickle.dump((config_path, params), fid)
 
     # Launch server
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 8099))
     app.logger.info("Launching the emhass webserver at: http://"+web_ui_url+":"+str(port))
     app.logger.info("Home Assistant data fetch will be performed using url: "+hass_url)
     app.logger.info("The base path is: "+base_path)
