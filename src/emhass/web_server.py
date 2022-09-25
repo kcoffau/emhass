@@ -215,7 +215,6 @@ if __name__ == "__main__":
     params['retrieve_hass_conf'] = retrieve_hass_conf
     params['optim_conf'] = optim_conf
     params['plant_conf'] = plant_conf
-    web_ui_url = '172.30.32.2'
 
     # Initialize this global dict
     opt_res = pd.read_csv(base_path+'/data/opt_res_latest.csv', index_col='timestamp')
@@ -252,11 +251,17 @@ if __name__ == "__main__":
             'lon': config_hass['longitude'],
             'alt': config_hass['elevation']
         }
+        # web_ui_url = '172.30.32.2'
+        url_addon = hass_url+"/addons"
+        response_addon = get(url_addon, headers=headers)
+        # config_response_addon = response_addon.json()
+        app.logger.info(response_addon)
     else:
         costfun = os.getenv('LOCAL_COSTFUN', default='profit')
         with open('/app/secrets_emhass.yaml', 'r') as file:
             params_secrets = yaml.load(file, Loader=yaml.FullLoader)
         hass_url = params_secrets['hass_url']
+        # web_ui_url = '0.0.0.0'
         
     # Build params
     params = build_params(params, options, args.addon)
@@ -269,4 +274,4 @@ if __name__ == "__main__":
     app.logger.info("Home Assistant data fetch will be performed using url: "+hass_url)
     app.logger.info("The base path is: "+base_path)
     app.logger.info("Using core emhass version: "+version('emhass'))
-    serve(app, host=web_ui_url, port=port, threads=8)
+    serve(app, port=port, threads=8) #host=web_ui_url, 
