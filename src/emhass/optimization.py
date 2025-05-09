@@ -3,13 +3,14 @@
 import bz2
 import copy
 import logging
+import os
 import pickle as cPickle
 from math import ceil
 
 import numpy as np
 import pandas as pd
 import pulp as plp
-from pulp import COIN_CMD, GLPK_CMD, PULP_CBC_CMD
+from pulp import COIN_CMD, GLPK_CMD, PULP_CBC_CMD, HiGHS
 
 
 class Optimization:
@@ -87,6 +88,13 @@ class Optimization:
         self.var_load_cost = var_load_cost
         self.var_prod_price = var_prod_price
         self.optim_status = None
+        if "num_threads" in optim_conf.keys():
+            if optim_conf["num_threads"] == 0:
+                self.num_threads = int(os.cpu_count())
+            else:
+                self.num_threads = int(optim_conf["num_threads"])
+        else:
+            self.num_threads = int(os.cpu_count())
         if "lp_solver" in optim_conf.keys():
             self.lp_solver = optim_conf["lp_solver"]
         else:
@@ -110,6 +118,7 @@ class Optimization:
         self.logger.debug(f"Optimization configuration: {optim_conf}")
         self.logger.debug(f"Plant configuration: {plant_conf}")
         self.logger.debug(f"Solver configuration: lp_solver={self.lp_solver}, lp_solver_path={self.lp_solver_path}")
+        self.logger.debug(f"Number of threads: {self.num_threads}")
 
     def perform_optimization(
         self,
@@ -642,50 +651,48 @@ class Optimization:
                 self.logger.debug(f"Load {k}: Sequence-based constraints set.")
 
             # --- Thermal deferrable load logic first ---
-            elif ("def_load_config" in self.optim_conf.keys()
+            elif (
+                "def_load_config" in self.optim_conf.keys()
                 and len(self.optim_conf["def_load_config"]) > k
-                and "thermal_config" in self.optim_conf["def_load_config"][k]):
+                and "thermal_config" in self.optim_conf["def_load_config"][k]
+            ):
+                self.logger.debug(f"Load {k} is a thermal deferrable load.")
+                def_load_config = self.optim_conf["def_load_config"][k]
+                if def_load_config and "thermal_config" in def_load_config:
+                    hc = def_load_config["thermal_config"]
+                    start_temperature = hc["start_temperature"]
+                    cooling_constant = hc["cooling_constant"]
+                    heating_rate = hc["heating_rate"]
+                    overshoot_temperature = hc["overshoot_temperature"]
+                    outdoor_temperature_forecast = data_opt["outdoor_temperature_forecast"]
+                    desired_temperatures = hc["desired_temperatures"]
+                    sense = hc.get("sense", "heat")
+                    sense_coeff = 1 if sense == "heat" else -1
 
+                    self.logger.debug(f"Load {k}: Thermal parameters: start_temperature={start_temperature}, cooling_constant={cooling_constant}, heating_rate={heating_rate}, overshoot_temperature={overshoot_temperature}")
 
-                    self.logger.debug(f"Load {k} is a thermal deferrable load.")
-
-                    # Special case of a thermal deferrable load
-                    def_load_config = self.optim_conf["def_load_config"][k]
-                    if def_load_config and "thermal_config" in def_load_config:
-                        hc = def_load_config["thermal_config"]
-                        start_temperature = hc["start_temperature"]
-                        cooling_constant = hc["cooling_constant"]
-                        heating_rate = hc["heating_rate"]
-                        overshoot_temperature = hc["overshoot_temperature"]
-                        outdoor_temperature_forecast = data_opt["outdoor_temperature_forecast"]
-                        desired_temperatures = hc["desired_temperatures"]
-                        sense = hc.get("sense", "heat")
-                        sense_coeff = 1 if sense == "heat" else -1
-
-                        self.logger.debug(f"Load {k}: Thermal parameters: start_temperature={start_temperature}, cooling_constant={cooling_constant}, heating_rate={heating_rate}, overshoot_temperature={overshoot_temperature}")
-
-                        predicted_temp = [start_temperature]
-                        for Id in set_I:
-                            if Id == 0:
-                                continue
-                            predicted_temp.append(
-                                predicted_temp[Id - 1]
-                                + (
-                                    P_deferrable[k][Id - 1]
-                                    * (
-                                        heating_rate
-                                        * self.timeStep
-                                        / self.optim_conf["nominal_power_of_deferrable_loads"][k]
-                                    )
-                                )
-                                - (
-                                    cooling_constant
-                                    * (
-                                        predicted_temp[Id - 1]
-                                        - outdoor_temperature_forecast.iloc[Id - 1]
-                                    )
+                    predicted_temp = [start_temperature]
+                    for Id in set_I:
+                        if Id == 0:
+                            continue
+                        predicted_temp.append(
+                            predicted_temp[Id - 1]
+                            + (
+                                P_deferrable[k][Id - 1]
+                                * (
+                                    heating_rate
+                                    * self.timeStep
+                                    / self.optim_conf["nominal_power_of_deferrable_loads"][k]
                                 )
                             )
+                            - (
+                                cooling_constant
+                                * (
+                                    predicted_temp[Id - 1]
+                                    - outdoor_temperature_forecast.iloc[Id - 1]
+                                )
+                            )
+                        )
 
                         is_overshoot = plp.LpVariable(
                             f"defload_{k}_overshoot_{Id}"
@@ -1135,16 +1142,18 @@ class Optimization:
         timeout = self.optim_conf["lp_solver_timeout"]
         # solving with default solver CBC
         if self.lp_solver == "PULP_CBC_CMD":
-            opt_model.solve(PULP_CBC_CMD(msg=0, timeLimit=timeout, threads=7))
+            opt_model.solve(PULP_CBC_CMD(msg=0, timeLimit=timeout, threads=self.num_threads))
         elif self.lp_solver == "GLPK_CMD":
-            opt_model.solve(GLPK_CMD(msg=0, timeLimit=timeout, threads=7))
+            opt_model.solve(GLPK_CMD(msg=0, timeLimit=timeout))
+        elif self.lp_solver == "HiGHS":
+            opt_model.solve(HiGHS(msg=0, timeLimit=timeout))
         elif self.lp_solver == "COIN_CMD":
             opt_model.solve(
-                COIN_CMD(msg=0, path=self.lp_solver_path, timeLimit=timeout, threads=7)
+                COIN_CMD(msg=0, path=self.lp_solver_path, timeLimit=timeout, threads=self.num_threads)
             )
         else:
             self.logger.warning("Solver %s unknown, using default", self.lp_solver)
-            opt_model.solve(PULP_CBC_CMD(msg=0, timeLimit=timeout, threads=7))
+            opt_model.solve(PULP_CBC_CMD(msg=0, timeLimit=timeout, threads=self.num_threads))
 
         # The status of the solution is printed to the screen
         self.optim_status = plp.LpStatus[opt_model.status]
@@ -1322,9 +1331,6 @@ class Optimization:
         # Solver execution logging
         self.logger.debug(f"Solver selected: {self.lp_solver}")
         self.logger.info(f"Optimization status: {self.optim_status}")
-
-        # Results logging
-
         return opt_tp
 
     def perform_perfect_forecast_optim(
